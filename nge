@@ -210,7 +210,7 @@ image:upgrade() {
 }
 
 redis:cli() {
-    _compose run --rm \
+    docker run --rm -it \
         --network host \
         ${REDIS_CLI_IMAGE} \
         redis-cli -h ${REDIS_HOST:-127.0.0.1} -p ${REDIS_PORT:-6379} ${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}}
@@ -224,13 +224,13 @@ mysql:cli() {
 db:cli() {
     case "${DB_CONNECTION}" in
         mysql|mariadb|"")
-            _compose run --rm \
+            docker run --rm -it \
                 --network host \
                 ${MYSQL_CLI_IMAGE} \
                 mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} ${DB_DATABASE}
             ;;
         pgsql|postgres|postgresql)
-            _compose run --rm \
+            docker run --rm -it \
                 --network host \
                 -e PGPASSWORD=${DB_PASSWORD} \
                 ${POSTGRES_CLI_IMAGE} \
@@ -294,13 +294,13 @@ db:import() {
         # Import from the pipe
         case "${DB_CONNECTION}" in
             mysql|mariadb|"")
-                _compose run --rm \
+                docker run --rm -i \
                     --network host \
                     ${MYSQL_CLI_IMAGE} \
                     mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "$database" "${db_args[@]}" < "$pipe"
                 ;;
             pgsql|postgres|postgresql)
-                _compose run --rm \
+                docker run --rm -i \
                     --network host \
                     -e PGPASSWORD=${DB_PASSWORD} \
                     ${POSTGRES_CLI_IMAGE} \
@@ -321,13 +321,13 @@ db:import() {
         printf "${BOLDYELLOW}→${NC} Starting import from SQL file...\n"
         case "${DB_CONNECTION}" in
             mysql|mariadb|"")
-                _compose run --rm \
+                docker run --rm -i \
                     --network host \
                     ${MYSQL_CLI_IMAGE} \
                     mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "$database" "${db_args[@]}" < "$file"
                 ;;
             pgsql|postgres|postgresql)
-                _compose run --rm \
+                docker run --rm -i \
                     --network host \
                     -e PGPASSWORD=${DB_PASSWORD} \
                     ${POSTGRES_CLI_IMAGE} \
@@ -401,13 +401,13 @@ db:export() {
             if [ ${#dump_args[@]} -eq 0 ]; then
                 dump_args=(--skip-lock-tables --skip-add-locks --no-tablespaces)
             fi
-            _compose run --rm \
+            docker run --rm \
                 --network host \
                 ${MYSQL_CLI_IMAGE} \
                 mysqldump -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "${dump_args[@]}" "$database" > "$temp_file" &
             ;;
         pgsql|postgres|postgresql)
-            _compose run --rm \
+            docker run --rm \
                 --network host \
                 -e PGPASSWORD=${DB_PASSWORD} \
                 ${POSTGRES_CLI_IMAGE} \
