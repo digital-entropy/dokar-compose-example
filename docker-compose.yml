@@ -1,0 +1,75 @@
+networks:
+  app:
+    driver: ${DOCKER_NETWORKS_DRIVER}
+
+volumes:
+  storage_data:
+    driver: ${DOCKER_VOLUMES_DRIVER}
+  psysh:
+    driver: ${DOCKER_VOLUMES_DRIVER}
+
+x-core-config: &core-config
+  image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+  user: appuser
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+  restart: unless-stopped
+  volumes:
+    - storage_data:/var/www/storage
+    - psysh:/home/appuser
+  env_file:
+    - .env
+  networks:
+    - app
+
+services:
+  gateway:
+    image: nginx
+    restart: unless-stopped
+    volumes:
+      - ./config/gateway/main-site.conf:/etc/nginx/conf.d/default.conf
+      - ./config/gateway/upstream.conf:/etc/nginx/conf.d/upstream.conf
+    ports:
+      - ${DOCKER_PORT}:80
+    networks:
+      - app
+
+  core-blue:
+    <<: *core-config
+    hostname: core-blue
+
+  core-green:
+    <<: *core-config
+    hostname: core-green
+
+  artisan:
+    <<: *core-config
+    hostname: artisan
+    restart: "no"
+    profiles: ["tools"]
+
+  horizon:
+    hostname: ${DOCKER_HOSTNAME:-sapm-imaged-docker}
+    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+    command: ["/usr/bin/php", "/var/www/artisan", "horizon"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - storage_data:/var/www/storage
+    networks:
+      - app
+
+  scheduler:
+    hostname: ${DOCKER_HOSTNAME:-sapm-imaged-docker}
+    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+    command: ["/usr/bin/php", "/var/www/artisan", "schedule:work"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - storage_data:/var/www/storage
+    networks:
+      - app

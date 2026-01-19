@@ -1,0 +1,494 @@
+#!/bin/bash
+set -Eeo pipefail
+set -o errexit    # Used to exit upon error, avoiding cascading errors
+
+IFS=$'\n\t'
+
+RED="31"
+GREEN="32"
+YELLOW="33"
+BOLDGREEN="\e[1;${GREEN}m"
+ITALICRED="\e[3;${RED}m"
+BOLDYELLOW="\e[1;${YELLOW}m"
+NC="\e[0m"
+
+# read .env file
+set -o allexport
+source .env set
+set +o allexport
+
+DOCKER_USER="appuser"
+DOCKER_PUID="1000"
+DOCKER_PGID="1000"
+
+MYSQL_CLI_IMAGE="bitnami/mysql-client:latest"
+POSTGRES_CLI_IMAGE="bitnami/postgresql-client:latest"
+REDIS_CLI_IMAGE="bitnami/redis-cli:latest"
+
+# usage: file_env VAR [DEFAULT]
+#    ie: file_env 'XYZ_DB_PASSWORD' 'example'
+# (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
+#  "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
+file_env() {
+	local var="$1"
+	local fileVar="${var}_FILE"
+	local def="${2:-}"
+	if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
+		echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
+		exit 1
+	fi
+	local val="$def"
+	if [ "${!var:-}" ]; then
+		val="${!var}"
+	elif [ "${!fileVar:-}" ]; then
+		val="$(< "${!fileVar}")"
+	fi
+	export "$var"="$val"
+	unset "$fileVar"
+}
+
+install() {
+	echo "installing in 5 seconds"
+	sleep 5
+
+    compose pull
+
+    compose up -d
+}
+
+compose() {
+    printf "${BOLDYELLOW}→${NC} run docker compose\n"
+    docker compose $@
+}
+
+_compose() {
+    docker compose $@
+}
+
+get_active_color() {
+    if grep -q "core-blue" config/gateway/upstream.conf; then
+        echo "core-blue"
+    else
+        echo "core-green"
+    fi
+}
+
+get_idle_color() {
+    if [ "$(get_active_color)" == "core-blue" ]; then
+        echo "core-green"
+    else
+        echo "core-blue"
+    fi
+}
+
+composer() {
+    local service=$(get_active_color)
+    printf "${BOLDGREEN}→${NC} run composer on user : ${DOCKER_USER} (service: $service)\n"
+    compose run --rm --user=${DOCKER_USER} $service composer $@
+}
+
+shell() {
+    local service=$(get_active_color)
+    printf "${BOLDGREEN}→${NC} run shell on user : ${DOCKER_USER} (service: $service)\n"
+    compose run --rm --user=${DOCKER_USER} $service bash
+}
+
+php() {
+    local service=$(get_active_color)
+    printf "${BOLDGREEN}→${NC} run php on user : ${DOCKER_USER} (service: $service)\n"
+    compose run --rm --user=${DOCKER_USER} $service php $@
+}
+
+artisan() {
+    local service=$(get_active_color)
+    printf "${BOLDGREEN}→${NC} run artisan on user : ${DOCKER_USER} (service: $service)\n"
+    # docker compose exec -e HOME=/home/${DOCKER_USER:-dokar} core runuser --preserve-environment -u ${DOCKER_USER:-dokar} /usr/bin/php /var/www/artisan $@
+    php artisan $@
+}
+
+a() {
+  artisan $@
+}
+
+up() {
+    echo "Nge up service $@..."
+    compose up -d $@
+}
+
+down() {
+    echo "Nge down all service..."
+    compose down
+}
+
+check() {
+    compose ps
+}
+
+code:update() {
+    printf "${BOLDYELLOW}Does this update require downtime? (y/N)${NC} "
+    read -r response
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        update:downtime
+    else
+        update:zero_downtime
+    fi
+}
+
+update:downtime() {
+    local active=$(get_active_color)
+    printf "${BOLDYELLOW}→${NC} Update with downtime on $active...\n"
+
+    compose pull $active artisan
+    artisan down
+
+    # Recreate the active container
+    compose up -d --force-recreate $active
+
+    # Run migrations
+    compose run --rm --user=${DOCKER_USER} artisan php artisan migrate --force
+    compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+
+    # Restart workers
+    compose pull horizon scheduler
+    compose up -d horizon scheduler
+
+    artisan up
+    compose restart gateway
+}
+
+update:zero_downtime() {
+    local active=$(get_active_color)
+    local idle=$(get_idle_color)
+
+    printf "${BOLDYELLOW}→${NC} Zero-downtime update initiated.\n"
+    printf "Active: ${GREEN}$active${NC}, Target: ${GREEN}$idle${NC}\n"
+
+    # 1. Pull and Start Idle
+    printf "${BOLDYELLOW}→${NC} Pulling and starting $idle...\n"
+    compose pull $idle artisan
+    compose up -d $idle
+
+    # 2. Wait for health
+    printf "${BOLDYELLOW}→${NC} Waiting for $idle to be ready (10s)...\n"
+    sleep 10
+
+    # 3. Run Migrations (on the NEW code)
+    printf "${BOLDYELLOW}→${NC} Running migrations...\n"
+    compose run --rm --user=${DOCKER_USER} artisan php artisan migrate --force
+    compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+
+    # 4. Switch Traffic
+    printf "${BOLDYELLOW}→${NC} Switching traffic to $idle...\n"
+    echo "upstream core { server $idle:80; }" > config/gateway/upstream.conf
+    _compose exec gateway nginx -s reload
+
+    # 5. Restart Workers
+    compose pull horizon scheduler
+    compose up -d horizon scheduler
+
+    # 6. Stop Old Active
+    printf "${BOLDYELLOW}→${NC} Stopping old service $active...\n"
+    compose stop $active
+
+    printf "${BOLDGREEN}→${NC} Update complete! Now running on $idle.\n"
+}
+
+status() {
+    compose ps --format "table {{.Name}}\t{{.State}}\t{{.Ports}}"
+}
+
+code:reload() {
+    local active=$(get_active_color)
+    artisan down
+    compose restart $active horizon scheduler
+    artisan up
+    compose restart gateway
+}
+
+image:upgrade() {
+    compose up -d --force-recreate --remove-orphans
+}
+
+redis:cli() {
+    _compose run --rm \
+        --network host \
+        ${REDIS_CLI_IMAGE} \
+        redis-cli -h ${REDIS_HOST:-127.0.0.1} -p ${REDIS_PORT:-6379} ${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}}
+}
+
+mysql:cli() {
+    db:cli
+}
+
+
+db:cli() {
+    case "${DB_CONNECTION}" in
+        mysql|mariadb|"")
+            _compose run --rm \
+                --network host \
+                ${MYSQL_CLI_IMAGE} \
+                mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} ${DB_DATABASE}
+            ;;
+        pgsql|postgres|postgresql)
+            _compose run --rm \
+                --network host \
+                -e PGPASSWORD=${DB_PASSWORD} \
+                ${POSTGRES_CLI_IMAGE} \
+                psql -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432} -U ${DB_USERNAME} -d ${DB_DATABASE}
+            ;;
+        *)
+            printf "${ITALICRED}Error: Unsupported DB_CONNECTION '${DB_CONNECTION}'.${NC}\n"
+            exit 1
+            ;;
+    esac
+}
+
+mysql:cli() {
+    db:cli
+}
+
+db:import() {
+    if [ -z "$1" ]; then
+        echo "Please provide a filename to import."
+        echo "Usage: db:import filename.sql[.gz] [--db=database_name] [additional args]"
+        exit 1
+    fi
+
+    local file="$1"
+    shift  # Remove filename from arguments
+
+    # Check if the file exists
+    if [ ! -f "$file" ]; then
+        printf "${ITALICRED}Error: File '$file' not found.${NC}\n"
+        exit 1
+    fi
+
+    # Parse arguments for database name
+    local database="${DB_DATABASE}"
+    local db_args=()
+
+    for arg in "$@"; do
+        if [[ "$arg" == --db=* ]]; then
+            database="${arg#--db=}"
+        else
+            db_args+=("$arg")
+        fi
+    done
+
+    printf "${BOLDGREEN}→${NC} Importing to database ${database}\n"
+
+    # Check file extension to determine if it's compressed
+    if [[ "$file" == *.gz ]]; then
+        printf "${BOLDYELLOW}→${NC} Detected gzip compressed file\n"
+
+        # Create a named pipe for streaming
+        local pipe=$(mktemp -u)
+        mkfifo "$pipe"
+
+        # Start decompression in background
+        gzip -dc "$file" > "$pipe" &
+        decompress_pid=$!
+
+        printf "${BOLDYELLOW}→${NC} Starting import (this might take a while)...\n"
+
+        # Import from the pipe
+        case "${DB_CONNECTION}" in
+            mysql|mariadb|"")
+                _compose run --rm \
+                    --network host \
+                    ${MYSQL_CLI_IMAGE} \
+                    mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "$database" "${db_args[@]}" < "$pipe"
+                ;;
+            pgsql|postgres|postgresql)
+                _compose run --rm \
+                    --network host \
+                    -e PGPASSWORD=${DB_PASSWORD} \
+                    ${POSTGRES_CLI_IMAGE} \
+                    psql -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432} -U ${DB_USERNAME} -d "$database" "${db_args[@]}" < "$pipe"
+                ;;
+            *)
+                printf "${ITALICRED}Error: Unsupported DB_CONNECTION '${DB_CONNECTION}'.${NC}\n"
+                rm "$pipe"
+                exit 1
+                ;;
+        esac
+        import_result=$?
+
+        # Wait for decompression to finish and clean up
+        wait $decompress_pid
+        rm "$pipe"
+    else
+        printf "${BOLDYELLOW}→${NC} Starting import from SQL file...\n"
+        case "${DB_CONNECTION}" in
+            mysql|mariadb|"")
+                _compose run --rm \
+                    --network host \
+                    ${MYSQL_CLI_IMAGE} \
+                    mysql -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "$database" "${db_args[@]}" < "$file"
+                ;;
+            pgsql|postgres|postgresql)
+                _compose run --rm \
+                    --network host \
+                    -e PGPASSWORD=${DB_PASSWORD} \
+                    ${POSTGRES_CLI_IMAGE} \
+                    psql -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432} -U ${DB_USERNAME} -d "$database" "${db_args[@]}" < "$file"
+                ;;
+            *)
+                printf "${ITALICRED}Error: Unsupported DB_CONNECTION '${DB_CONNECTION}'.${NC}\n"
+                exit 1
+                ;;
+        esac
+        import_result=$?
+    fi
+
+    # Check the result
+    if [ $import_result -eq 0 ]; then
+        printf "${BOLDGREEN}→${NC} Import completed successfully!\n"
+    else
+        printf "${ITALICRED}Error: Import failed with code $import_result${NC}\n"
+        exit $import_result
+    fi
+}
+
+mysql:import() {
+    db:import "$@"
+}
+
+postgres:import() {
+    DB_CONNECTION=pgsql db:import "$@"
+}
+
+db:export() {
+    if [ -z "$1" ]; then
+        echo "Please provide a filename prefix for the export."
+        echo "Usage: db:export filename_prefix [--db=database_name] [additional args]"
+        exit 1
+    fi
+
+    # file name add timestamp
+    local timestamp=$(date +"%Y%m%d_%H%M%S")
+    local filename="${1}_${timestamp}.sql.gz"
+
+    # Parse arguments for database name
+    local database="${DB_DATABASE}"
+    local dump_args=()
+
+    shift  # Remove filename prefix from arguments
+
+    for arg in "$@"; do
+        if [[ "$arg" == --db=* ]]; then
+            database="${arg#--db=}"
+        else
+            dump_args+=("$arg")
+        fi
+    done
+
+    printf "${BOLDGREEN}→${NC} run database export on ${database}\n"
+    printf "${BOLDGREEN}→${NC} export to file $filename\n"
+
+    # check gzip exists
+    if ! command -v gzip &> /dev/null; then
+        echo "gzip could not be found. Please install gzip."
+        exit 1
+    fi
+
+    local temp_file=$(mktemp)
+
+    printf "${BOLDYELLOW}→${NC} Starting database export"
+
+    case "${DB_CONNECTION}" in
+        mysql|mariadb|"")
+            if [ ${#dump_args[@]} -eq 0 ]; then
+                dump_args=(--skip-lock-tables --skip-add-locks --no-tablespaces)
+            fi
+            _compose run --rm \
+                --network host \
+                ${MYSQL_CLI_IMAGE} \
+                mysqldump -h ${DB_HOST:-127.0.0.1} -P ${DB_PORT:-3306} -u ${DB_USERNAME:-root} -p${DB_PASSWORD} "${dump_args[@]}" "$database" > "$temp_file" &
+            ;;
+        pgsql|postgres|postgresql)
+            _compose run --rm \
+                --network host \
+                -e PGPASSWORD=${DB_PASSWORD} \
+                ${POSTGRES_CLI_IMAGE} \
+                pg_dump -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432} -U ${DB_USERNAME} "${dump_args[@]}" "$database" > "$temp_file" &
+            ;;
+        *)
+            printf "${ITALICRED}Error: Unsupported DB_CONNECTION '${DB_CONNECTION}'.${NC}\n"
+            rm -f "$temp_file"
+            exit 1
+            ;;
+    esac
+    export_pid=$!
+
+    # Show loading animation
+    spin='-\|/'
+    i=0
+    while kill -0 $export_pid 2>/dev/null; do
+        i=$(( (i+1) % 4 ))
+        printf "\r${BOLDYELLOW}→${NC} Exporting database... ${spin:$i:1}"
+        sleep .1
+    done
+    printf "\r${BOLDGREEN}→${NC} Database export completed!     \n"
+
+    # Check if the file is empty
+    if [ -s "$temp_file" ]; then
+        printf "${BOLDYELLOW}→${NC} Compressing export file..."
+        cat "$temp_file" | gzip > "$filename"
+        printf "\r${BOLDGREEN}→${NC} Export completed: $filename\n"
+    else
+        printf "${ITALICRED}Error: export produced no output. Database might be empty or an error occurred.${NC}\n"
+        rm -f "$temp_file"
+        exit 1
+    fi
+
+    # Clean up
+    rm -f "$temp_file"
+}
+
+mysql:export() {
+    db:export "$@"
+}
+
+postgres:export() {
+    DB_CONNECTION=pgsql db:export "$@"
+}
+
+help() {
+  echo "Usage: $0 [COMMAND]"
+  echo "Available commands:"
+  echo "  install       Installs and starts the containers"
+  echo "  compose       Wraps docker compose commands"
+  echo "  composer      Runs composer inside the core container"
+  echo "  shell         Opens a bash shell in the core container"
+  echo "  php           Runs a PHP command inside the core container"
+  echo "  artisan, a    Shortcut for artisan commands"
+  echo "  up            Starts specified service(s)"
+  echo "  down          Stops all services"
+  echo "  check         Checks docker-compose status"
+  echo "  status        Prints docker-compose status in a table"
+  echo "  code:update   Update core image, reload code, then run migrate and patch"
+  echo "  code:reload   Puts app in maintenance mode and restarts services"
+  echo "  image:upgrade Force-recreates all (nginx,mysql,redis,...) containers using latest images"
+  echo "  redis:cli     Opens Redis CLI"
+  echo "  db:cli        Opens database CLI (MySQL/Postgres)"
+  echo "  mysql:cli     Alias for db:cli"
+  echo "  db:import     Imports SQL into MySQL or Postgres"
+  echo "  mysql:import  Alias for db:import"
+  echo "  postgres:import Import SQL into Postgres"
+  echo "  db:export     Export SQL from MySQL or Postgres"
+  echo "  mysql:export  Alias for db:export"
+  echo "  postgres:export Export SQL from Postgres"
+  echo
+}
+
+# Check if the function exists (bash specific)
+if declare -f "$1" > /dev/null
+then
+  # call arguments verbatim
+  "$@"
+else
+  # Show a helpful error
+  echo "'$1' is not a known function name. See '$0 help' for usage."
+  exit 1
+fi
