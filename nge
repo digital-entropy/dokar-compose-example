@@ -17,9 +17,9 @@ set -o allexport
 source .env set
 set +o allexport
 
-DOCKER_USER="appuser"
-DOCKER_PUID="1000"
-DOCKER_PGID="1000"
+DOCKER_USER="${DOCKER_USER:-appuser}"
+DOCKER_PUID="${DOCKER_PUID:-1000}"
+DOCKER_PGID="${DOCKER_PGID:-1000}"
 
 MYSQL_CLI_IMAGE="bitnami/mysql-client:latest"
 POSTGRES_CLI_IMAGE="bitnami/postgresql-client:latest"
@@ -52,8 +52,27 @@ install() {
 	sleep 5
 
     compose pull
+    start
+}
 
-    compose up -d
+start() {
+    # Ensure upstream config exists, default to blue
+    if [ ! -f config/gateway/upstream.conf ]; then
+        mkdir -p config/gateway
+        echo "upstream core { server core-blue:80; }" > config/gateway/upstream.conf
+    fi
+
+    local active=$(get_active_color)
+    local idle=$(get_idle_color)
+
+    printf "${BOLDGREEN}→${NC} Starting application on active service: ${GREEN}$active${NC}\n"
+
+    # Start specific services
+    compose up -d gateway $active horizon scheduler
+
+    # Ensure idle service is stopped
+    printf "${BOLDYELLOW}→${NC} Ensuring idle service ($idle) is stopped...\n"
+    compose stop $idle
 }
 
 compose() {
@@ -458,6 +477,7 @@ help() {
   echo "Usage: $0 [COMMAND]"
   echo "Available commands:"
   echo "  install       Installs and starts the containers"
+  echo "  start         Starts the app respecting blue/green state"
   echo "  compose       Wraps docker compose commands"
   echo "  composer      Runs composer inside the core container"
   echo "  shell         Opens a bash shell in the core container"
