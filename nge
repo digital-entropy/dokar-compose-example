@@ -65,20 +65,20 @@ start() {
 
     printf "${BOLDGREEN}→${NC} Starting application on active service: \e[${GREEN}m$active${NC}\n"
 
-    local services=""
+    local services=()
     if [ "$ENABLE_WEB" = "true" ]; then
-        services="gateway $active"
+        services+=("gateway" "$active")
     fi
     if [ "$ENABLE_HORIZON" = "true" ]; then
-        services="$services horizon"
+        services+=("horizon")
     fi
     if [ "$ENABLE_SCHEDULER" = "true" ]; then
-        services="$services scheduler"
+        services+=("scheduler")
     fi
 
     # Start specific services
-    if [ -n "$services" ]; then
-        compose up -d $services
+    if [ ${#services[@]} -gt 0 ]; then
+        compose up -d "${services[@]}"
     fi
 
     # Ensure idle service is stopped (only if web is enabled)
@@ -187,13 +187,13 @@ update:downtime() {
     compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
 
     # Restart workers
-    local workers=""
-    if [ "$ENABLE_HORIZON" = "true" ]; then workers="$workers horizon"; fi
-    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers="$workers scheduler"; fi
+    local workers=()
+    if [ "$ENABLE_HORIZON" = "true" ]; then workers+=("horizon"); fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers+=("scheduler"); fi
 
-    if [ -n "$workers" ]; then
-        compose pull $workers
-        compose up -d $workers
+    if [ ${#workers[@]} -gt 0 ]; then
+        compose pull "${workers[@]}"
+        compose up -d "${workers[@]}"
     fi
 
     artisan up
@@ -233,13 +233,13 @@ update:zero_downtime() {
     fi
 
     # 5. Restart Workers
-    local workers=""
-    if [ "$ENABLE_HORIZON" = "true" ]; then workers="$workers horizon"; fi
-    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers="$workers scheduler"; fi
+    local workers=()
+    if [ "$ENABLE_HORIZON" = "true" ]; then workers+=("horizon"); fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers+=("scheduler"); fi
 
-    if [ -n "$workers" ]; then
-        compose pull $workers
-        compose up -d $workers
+    if [ ${#workers[@]} -gt 0 ]; then
+        compose pull "${workers[@]}"
+        compose up -d "${workers[@]}"
     fi
 
     # 6. Stop Old Active
@@ -263,13 +263,13 @@ code:reload() {
     local active=$(get_active_color)
     artisan down
 
-    local services=""
-    if [ "$ENABLE_WEB" = "true" ]; then services="$services $active"; fi
-    if [ "$ENABLE_HORIZON" = "true" ]; then services="$services horizon"; fi
-    if [ "$ENABLE_SCHEDULER" = "true" ]; then services="$services scheduler"; fi
+    local services=()
+    if [ "$ENABLE_WEB" = "true" ]; then services+=("$active"); fi
+    if [ "$ENABLE_HORIZON" = "true" ]; then services+=("horizon"); fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then services+=("scheduler"); fi
 
-    if [ -n "$services" ]; then
-        compose restart $services
+    if [ ${#services[@]} -gt 0 ]; then
+        compose restart "${services[@]}"
     fi
 
     artisan up
