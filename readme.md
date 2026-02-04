@@ -15,6 +15,11 @@ A simple containerized setup for deploying App applications.
    DOCKER_VOLUMES_DRIVER=local
    DOCKER_NETWORKS_DRIVER=bridge
    DOCKER_HOSTNAME=app-from-unknown-server
+   
+   # Service Enable/Disable
+   ENABLE_WEB=true       # Set to false to disable web container & gateway
+   ENABLE_HORIZON=true   # Set to false to disable horizon worker
+   ENABLE_SCHEDULER=true # Set to false to disable scheduler
    ```
 
    1.2. Login to registry
