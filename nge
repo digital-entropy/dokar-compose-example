@@ -21,6 +21,10 @@ DOCKER_USER="${DOCKER_USER:-appuser}"
 DOCKER_PUID="${DOCKER_PUID:-1000}"
 DOCKER_PGID="${DOCKER_PGID:-1000}"
 
+ENABLE_WEB="${ENABLE_WEB:-true}"
+ENABLE_HORIZON="${ENABLE_HORIZON:-true}"
+ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
+
 MYSQL_CLI_IMAGE="bitnami/mysql-client:latest"
 POSTGRES_CLI_IMAGE="bitnami/postgresql-client:latest"
 REDIS_CLI_IMAGE="bitnami/redis-cli:latest"
@@ -61,12 +65,27 @@ start() {
 
     printf "${BOLDGREEN}→${NC} Starting application on active service: \e[${GREEN}m$active${NC}\n"
 
-    # Start specific services
-    compose up -d gateway $active horizon scheduler
+    local services=""
+    if [ "$ENABLE_WEB" = "true" ]; then
+        services="gateway $active"
+    fi
+    if [ "$ENABLE_HORIZON" = "true" ]; then
+        services="$services horizon"
+    fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then
+        services="$services scheduler"
+    fi
 
-    # Ensure idle service is stopped
-    printf "${BOLDYELLOW}→${NC} Ensuring idle service ($idle) is stopped...\n"
-    compose stop $idle
+    # Start specific services
+    if [ -n "$services" ]; then
+        compose up -d $services
+    fi
+
+    # Ensure idle service is stopped (only if web is enabled)
+    if [ "$ENABLE_WEB" = "true" ]; then
+        printf "${BOLDYELLOW}→${NC} Ensuring idle service ($idle) is stopped...\n"
+        compose stop $idle
+    fi
 }
 
 compose() {
@@ -168,11 +187,19 @@ update:downtime() {
     compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
 
     # Restart workers
-    compose pull horizon scheduler
-    compose up -d horizon scheduler
+    local workers=""
+    if [ "$ENABLE_HORIZON" = "true" ]; then workers="$workers horizon"; fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers="$workers scheduler"; fi
+
+    if [ -n "$workers" ]; then
+        compose pull $workers
+        compose up -d $workers
+    fi
 
     artisan up
-    compose restart gateway
+    if [ "$ENABLE_WEB" = "true" ]; then
+        compose restart gateway
+    fi
 }
 
 update:zero_downtime() {
@@ -183,13 +210,15 @@ update:zero_downtime() {
     printf "Active: \e[${GREEN}m$active${NC}, Target: \e[${GREEN}m$idle${NC}\n"
 
     # 1. Pull and Start Idle
-    printf "${BOLDYELLOW}→${NC} Pulling and starting $idle...\n"
-    compose pull $idle artisan
-    compose up -d $idle
+    if [ "$ENABLE_WEB" = "true" ]; then
+        printf "${BOLDYELLOW}→${NC} Pulling and starting $idle...\n"
+        compose pull $idle artisan
+        compose up -d $idle
 
-    # 2. Wait for health
-    printf "${BOLDYELLOW}→${NC} Waiting for $idle to be ready (10s)...\n"
-    sleep 10
+        # 2. Wait for health
+        printf "${BOLDYELLOW}→${NC} Waiting for $idle to be ready (10s)...\n"
+        sleep 10
+    fi
 
     # 3. Run Migrations (on the NEW code)
     printf "${BOLDYELLOW}→${NC} Running migrations...\n"
@@ -197,19 +226,33 @@ update:zero_downtime() {
     compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
 
     # 4. Switch Traffic
-    printf "${BOLDYELLOW}→${NC} Switching traffic to $idle...\n"
-    printf "upstream core {\n    server $idle:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
-    _compose exec gateway nginx -s reload
+    if [ "$ENABLE_WEB" = "true" ]; then
+        printf "${BOLDYELLOW}→${NC} Switching traffic to $idle...\n"
+        printf "upstream core {\n    server $idle:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
+        _compose exec gateway nginx -s reload
+    fi
 
     # 5. Restart Workers
-    compose pull horizon scheduler
-    compose up -d horizon scheduler
+    local workers=""
+    if [ "$ENABLE_HORIZON" = "true" ]; then workers="$workers horizon"; fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers="$workers scheduler"; fi
+
+    if [ -n "$workers" ]; then
+        compose pull $workers
+        compose up -d $workers
+    fi
 
     # 6. Stop Old Active
-    printf "${BOLDYELLOW}→${NC} Stopping old service $active...\n"
-    compose stop $active
+    if [ "$ENABLE_WEB" = "true" ]; then
+        printf "${BOLDYELLOW}→${NC} Stopping old service $active...\n"
+        compose stop $active
+    fi
 
-    printf "${BOLDGREEN}→${NC} Update complete! Now running on $idle.\n"
+    if [ "$ENABLE_WEB" = "true" ]; then
+        printf "${BOLDGREEN}→${NC} Update complete! Now running on $idle.\n"
+    else
+        printf "${BOLDGREEN}→${NC} Update complete! Workers updated.\n"
+    fi
 }
 
 status() {
@@ -219,9 +262,21 @@ status() {
 code:reload() {
     local active=$(get_active_color)
     artisan down
-    compose restart $active horizon scheduler
+
+    local services=""
+    if [ "$ENABLE_WEB" = "true" ]; then services="$services $active"; fi
+    if [ "$ENABLE_HORIZON" = "true" ]; then services="$services horizon"; fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then services="$services scheduler"; fi
+
+    if [ -n "$services" ]; then
+        compose restart $services
+    fi
+
     artisan up
-    compose restart gateway
+
+    if [ "$ENABLE_WEB" = "true" ]; then
+        compose restart gateway
+    fi
 }
 
 image:upgrade() {
