@@ -1,1 +1,2 @@
 .env
+config/gateway/upstream.conf
