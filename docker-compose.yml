@@ -90,20 +90,18 @@ services:
       - app
 
   pgbouncer:
-    image: bitnami/pgbouncer:latest
+    image: edoburu/pgbouncer:latest
     logging: *logging
     restart: unless-stopped
     environment:
-      - POSTGRESQL_HOST=${PGBOUNCER_UPSTREAM_HOST}
-      - POSTGRESQL_PORT=${PGBOUNCER_UPSTREAM_PORT:-5432}
-      - POSTGRESQL_USERNAME=${PGBOUNCER_UPSTREAM_USERNAME}
-      - POSTGRESQL_PASSWORD=${PGBOUNCER_UPSTREAM_PASSWORD}
-      - POSTGRESQL_DATABASE=${PGBOUNCER_UPSTREAM_DATABASE}
-      - PGBOUNCER_DATABASE=${DB_DATABASE}
-      - PGBOUNCER_PORT=6432
-      - PGBOUNCER_POOL_MODE=transaction
-      - PGBOUNCER_MAX_CLIENT_CONN=100
-      - PGBOUNCER_DEFAULT_POOL_SIZE=20
-      - PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits
+      - DB_HOST=${PGBOUNCER_UPSTREAM_HOST}
+      - DB_PORT=${PGBOUNCER_UPSTREAM_PORT:-5432}
+      - DB_USER=${PGBOUNCER_UPSTREAM_USERNAME}
+      - DB_PASSWORD=${PGBOUNCER_UPSTREAM_PASSWORD}
+      - DB_NAME=${PGBOUNCER_UPSTREAM_DATABASE}
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=100
+      - DEFAULT_POOL_SIZE=20
+      - IGNORE_STARTUP_PARAMETERS=extra_float_digits
     networks:
       - app
