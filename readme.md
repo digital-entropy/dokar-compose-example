@@ -40,3 +40,19 @@ A simple containerized setup for deploying App applications.
    ```
    ./nge mysql:import < /path/to/file.sql
    ```
+
+5. (Optional) Start Extra Services
+
+   **PgBouncer (Connection Pooling)**
+   If you need connection pooling, configure `PGBOUNCER_UPSTREAM_*` in your `.env` and start the service:
+   ```bash
+   ./nge up pgbouncer
+   ```
+   *Update your app's `DB_HOST` to use `pgbouncer`.*
+
+   **Sentry Relay**
+   To run a local Sentry Relay, set `SENTRY_UPSTREAM` in your `.env` and start the service:
+   ```bash
+   ./nge up sentry-relay
+   ```
+   *Point your app's Sentry DSN to this local relay.*
