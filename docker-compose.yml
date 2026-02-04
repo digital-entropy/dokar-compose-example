@@ -8,19 +8,38 @@ volumes:
   psysh:
     driver: ${DOCKER_VOLUMES_DRIVER}
 
+x-logging: &logging
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-core-config: &core-config
   image: ${DOCKER_IMAGE}:${DOCKER_TAG}
   user: ${DOCKER_USER:-appuser}
-  logging:
-    options:
-      max-size: "10m"
-      max-file: "3"
+  logging: *logging
   restart: unless-stopped
   volumes:
     - storage_data:/var/www/storage
     - psysh:/home/${DOCKER_USER:-appuser}
   env_file:
     - .env
+  networks:
+    - app
+
+x-executable: &executable
+  hostname: ${DOCKER_HOSTNAME:-app-imaged-docker}
+  image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+  user: ${DOCKER_USER:-appuser}
+  logging: *logging
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    - USER=${DOCKER_USER:-appuser}
+    - PUID=${DOCKER_PUID:-1000}
+    - PGID=${DOCKER_PGID:-1000}
+  volumes:
+    - storage_data:/var/www/storage
   networks:
     - app
 
@@ -51,27 +70,21 @@ services:
     profiles: ["tools"]
 
   horizon:
-    hostname: ${DOCKER_HOSTNAME:-sapm-imaged-docker}
-    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
-    user: ${DOCKER_USER:-appuser}
+    <<: *executable
     command: ["/usr/bin/php", "/var/www/artisan", "horizon"]
-    restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - storage_data:/var/www/storage
-    networks:
-      - app
 
   scheduler:
-    hostname: ${DOCKER_HOSTNAME:-sapm-imaged-docker}
-    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
-    user: ${DOCKER_USER:-appuser}
+    <<: *executable
     command: ["/usr/bin/php", "/var/www/artisan", "schedule:work"]
+
+  sentry-relay:
+    image: getsentry/relay:latest
+    logging: *logging
     restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - storage_data:/var/www/storage
+    environment:
+      RELAY_MODE: proxy
+      RELAY_UPSTREAM: ${SENTRY_UPSTREAM:-https://sentry.io/}
+      RELAY_HOST: 0.0.0.0
+      RELAY_PORT: 3000
     networks:
       - app

@@ -59,13 +59,13 @@ start() {
     # Ensure upstream config exists, default to blue
     if [ ! -f config/gateway/upstream.conf ]; then
         mkdir -p config/gateway
-        echo "upstream core { server core-blue:80; }" > config/gateway/upstream.conf
+        printf "upstream core {\n    server core-blue:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
     fi
 
     local active=$(get_active_color)
     local idle=$(get_idle_color)
 
-    printf "${BOLDGREEN}→${NC} Starting application on active service: ${GREEN}$active${NC}\n"
+    printf "${BOLDGREEN}→${NC} Starting application on active service: \e[${GREEN}m$active${NC}\n"
 
     # Start specific services
     compose up -d gateway $active horizon scheduler
@@ -180,7 +180,7 @@ update:zero_downtime() {
     local idle=$(get_idle_color)
 
     printf "${BOLDYELLOW}→${NC} Zero-downtime update initiated.\n"
-    printf "Active: ${GREEN}$active${NC}, Target: ${GREEN}$idle${NC}\n"
+    printf "Active: \e[${GREEN}m$active${NC}, Target: \e[${GREEN}m$idle${NC}\n"
 
     # 1. Pull and Start Idle
     printf "${BOLDYELLOW}→${NC} Pulling and starting $idle...\n"
@@ -198,7 +198,7 @@ update:zero_downtime() {
 
     # 4. Switch Traffic
     printf "${BOLDYELLOW}→${NC} Switching traffic to $idle...\n"
-    echo "upstream core { server $idle:80; }" > config/gateway/upstream.conf
+    printf "upstream core {\n    server $idle:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
     _compose exec gateway nginx -s reload
 
     # 5. Restart Workers
