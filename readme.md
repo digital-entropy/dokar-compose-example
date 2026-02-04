@@ -49,7 +49,7 @@ A simple containerized setup for deploying App applications.
 5. (Optional) Start Extra Services
 
    **PgBouncer (Connection Pooling)**
-   If you need connection pooling, configure `PGBOUNCER_UPSTREAM_*` in your `.env` and start the service:
+   If you need connection pooling, configure `PGBOUNCER_UPSTREAM_*` (and optionally `PGBOUNCER_AUTH_TYPE`) in your `.env` and start the service:
    ```bash
    ./nge up pgbouncer
    ```
