@@ -83,7 +83,7 @@ services:
     restart: unless-stopped
     environment:
       RELAY_MODE: proxy
-      RELAY_UPSTREAM: ${SENTRY_UPSTREAM:-https://sentry.io/}
+      RELAY_UPSTREAM_URL: ${SENTRY_UPSTREAM:-https://sentry.io/}
       RELAY_HOST: 0.0.0.0
       RELAY_PORT: 3000
     networks:
