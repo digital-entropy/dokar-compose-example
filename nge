@@ -56,12 +56,6 @@ install() {
 }
 
 start() {
-    # Ensure upstream config exists, default to blue
-    if [ ! -f config/gateway/upstream.conf ]; then
-        mkdir -p config/gateway
-        printf "upstream core {\n    server core-blue:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
-    fi
-
     local active=$(get_active_color)
     local idle=$(get_idle_color)
 
@@ -85,6 +79,12 @@ _compose() {
 }
 
 get_active_color() {
+    # Ensure upstream config exists, default to blue
+    if [ ! -f config/gateway/upstream.conf ]; then
+        mkdir -p config/gateway
+        printf "upstream core {\n    server core-blue:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
+    fi
+
     if grep -q "core-blue" config/gateway/upstream.conf; then
         echo "core-blue"
     else
