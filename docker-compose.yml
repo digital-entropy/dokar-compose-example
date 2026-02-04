@@ -45,7 +45,7 @@ x-executable: &executable
 
 services:
   gateway:
-    image: nginx
+    image: nginx:latest
     restart: unless-stopped
     volumes:
       - ./config/gateway/main-site.conf:/etc/nginx/conf.d/default.conf
