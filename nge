@@ -260,7 +260,7 @@ update:zero_downtime() {
     if [ "$ENABLE_WEB" = "true" ]; then
         printf "${BOLDYELLOW}→${NC} Switching traffic to $idle...\n"
         printf "upstream core {\n    server $idle:80;\n    keepalive 64;\n}\n" > config/gateway/upstream.conf
-        _compose exec gateway nginx -s reload
+        _compose exec -T gateway nginx -s reload
     fi
 
     # 5. Restart Workers
