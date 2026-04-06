@@ -29,6 +29,9 @@ MYSQL_CLI_IMAGE="bitnami/mysql-client:latest"
 POSTGRES_CLI_IMAGE="bitnami/postgresql-client:latest"
 REDIS_CLI_IMAGE="bitnami/redis-cli:latest"
 
+NGE_NONINTERACTIVE="${NGE_NONINTERACTIVE:-false}"
+COMPOSE_WAIT_TIMEOUT="${COMPOSE_WAIT_TIMEOUT:-120}"
+
 # usage: file_env VAR [DEFAULT]
 #    ie: file_env 'XYZ_DB_PASSWORD' 'example'
 # (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
@@ -55,7 +58,7 @@ install() {
 	echo "installing in 5 seconds"
 	sleep 5
 
-    compose pull
+    compose:pull
     start
 }
 
@@ -78,7 +81,7 @@ start() {
 
     # Start specific services
     if [ ${#services[@]} -gt 0 ]; then
-        compose up -d "${services[@]}"
+        compose:up:detached "${services[@]}"
     fi
 
     # Ensure idle service is stopped (only if web is enabled)
@@ -90,11 +93,42 @@ start() {
 
 compose() {
     printf "${BOLDYELLOW}→${NC} run docker compose\n"
-    docker compose $@
+
+    local compose_args=()
+    if [ "$NGE_NONINTERACTIVE" = "true" ]; then
+        compose_args+=(--ansi never --progress plain)
+    fi
+
+    docker compose "${compose_args[@]}" "$@"
 }
 
 _compose() {
-    docker compose $@
+    local compose_args=()
+    if [ "$NGE_NONINTERACTIVE" = "true" ]; then
+        compose_args+=(--ansi never --progress plain)
+    fi
+
+    docker compose "${compose_args[@]}" "$@"
+}
+
+compose:pull() {
+    if [ "$NGE_NONINTERACTIVE" = "true" ]; then
+        printf "${BOLDYELLOW}→${NC} run docker compose\n"
+        docker compose --ansi never --progress plain pull -q "$@"
+        return
+    fi
+
+    compose pull "$@"
+}
+
+compose:up:detached() {
+    local args=(-d "$@")
+
+    if [ "$NGE_NONINTERACTIVE" = "true" ]; then
+        args=(-d --quiet-pull --wait --wait-timeout "$COMPOSE_WAIT_TIMEOUT" "$@")
+    fi
+
+    compose up "${args[@]}"
 }
 
 get_active_color() {
@@ -150,7 +184,7 @@ a() {
 
 up() {
     echo "Nge up service $@..."
-    compose up -d $@
+    compose:up:detached "$@"
 }
 
 down() {
@@ -176,11 +210,11 @@ update:downtime() {
     local active=$(get_active_color)
     printf "${BOLDYELLOW}→${NC} Update with downtime on $active...\n"
 
-    compose pull $active artisan
+    compose:pull "$active" artisan
     artisan down
 
     # Recreate the active container
-    compose up -d --force-recreate $active
+    compose:up:detached --force-recreate "$active"
 
     # Run migrations
     compose run --rm --user=${DOCKER_USER} artisan php artisan migrate --force
@@ -192,8 +226,8 @@ update:downtime() {
     if [ "$ENABLE_SCHEDULER" = "true" ]; then workers+=("scheduler"); fi
 
     if [ ${#workers[@]} -gt 0 ]; then
-        compose pull "${workers[@]}"
-        compose up -d "${workers[@]}"
+        compose:pull "${workers[@]}"
+        compose:up:detached "${workers[@]}"
     fi
 
     artisan up
@@ -212,12 +246,9 @@ update:zero_downtime() {
     # 1. Pull and Start Idle
     if [ "$ENABLE_WEB" = "true" ]; then
         printf "${BOLDYELLOW}→${NC} Pulling and starting $idle...\n"
-        compose pull $idle artisan
-        compose up -d $idle
-
-        # 2. Wait for health
-        printf "${BOLDYELLOW}→${NC} Waiting for $idle to be ready (10s)...\n"
-        sleep 10
+        compose:pull "$idle" artisan
+        printf "${BOLDYELLOW}→${NC} Waiting for $idle to be ready...\n"
+        compose:up:detached "$idle"
     fi
 
     # 3. Run Migrations (on the NEW code)
@@ -238,8 +269,8 @@ update:zero_downtime() {
     if [ "$ENABLE_SCHEDULER" = "true" ]; then workers+=("scheduler"); fi
 
     if [ ${#workers[@]} -gt 0 ]; then
-        compose pull "${workers[@]}"
-        compose up -d "${workers[@]}"
+        compose:pull "${workers[@]}"
+        compose:up:detached "${workers[@]}"
     fi
 
     # 6. Stop Old Active
@@ -280,7 +311,7 @@ code:reload() {
 }
 
 image:upgrade() {
-    compose up -d --force-recreate --remove-orphans
+    compose:up:detached --force-recreate --remove-orphans
 }
 
 redis:cli() {
