@@ -71,10 +71,12 @@ services:
 
   horizon:
     <<: *executable
+    init: true
     command: ["/usr/bin/php", "/var/www/artisan", "horizon"]
 
   scheduler:
     <<: *executable
+    init: true
     command: ["/usr/bin/php", "/var/www/artisan", "schedule:work"]
 
   sentry-relay:
