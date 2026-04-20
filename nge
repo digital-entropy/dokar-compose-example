@@ -84,6 +84,8 @@ start() {
         compose:up:detached "${services[@]}"
     fi
 
+    reconcile_worker_services
+
     # Ensure idle service is stopped (only if web is enabled)
     if [ "$ENABLE_WEB" = "true" ]; then
         printf "${BOLDYELLOW}→${NC} Ensuring idle service ($idle) is stopped...\n"
@@ -129,6 +131,20 @@ compose:up:detached() {
     fi
 
     compose up "${args[@]}"
+}
+
+reconcile_worker_services() {
+    local disabled=()
+
+    if [ "$ENABLE_HORIZON" != "true" ]; then disabled+=("horizon"); fi
+    if [ "$ENABLE_SCHEDULER" != "true" ]; then disabled+=("scheduler"); fi
+
+    if [ ${#disabled[@]} -eq 0 ]; then
+        return
+    fi
+
+    printf "${BOLDYELLOW}→${NC} Ensuring disabled worker services are stopped: %s\n" "${disabled[*]}"
+    compose rm --stop --force "${disabled[@]}"
 }
 
 get_active_color() {
@@ -189,6 +205,7 @@ up() {
 
 down() {
     echo "Nge down all service..."
+    compose rm --stop --force horizon scheduler
     compose down
 }
 
@@ -229,6 +246,8 @@ update:downtime() {
         compose:pull "${workers[@]}"
         compose:up:detached "${workers[@]}"
     fi
+
+    reconcile_worker_services
 
     artisan up
     if [ "$ENABLE_WEB" = "true" ]; then
@@ -273,6 +292,8 @@ update:zero_downtime() {
         compose:up:detached "${workers[@]}"
     fi
 
+    reconcile_worker_services
+
     # 6. Stop Old Active
     if [ "$ENABLE_WEB" = "true" ]; then
         printf "${BOLDYELLOW}→${NC} Stopping old service $active...\n"
@@ -303,6 +324,8 @@ code:reload() {
         compose restart "${services[@]}"
     fi
 
+    reconcile_worker_services
+
     artisan up
 
     if [ "$ENABLE_WEB" = "true" ]; then
@@ -312,6 +335,16 @@ code:reload() {
 
 image:upgrade() {
     compose:up:detached --force-recreate --remove-orphans
+
+    local workers=()
+    if [ "$ENABLE_HORIZON" = "true" ]; then workers+=("horizon"); fi
+    if [ "$ENABLE_SCHEDULER" = "true" ]; then workers+=("scheduler"); fi
+
+    if [ ${#workers[@]} -gt 0 ]; then
+        compose:up:detached --force-recreate "${workers[@]}"
+    fi
+
+    reconcile_worker_services
 }
 
 redis:cli() {
