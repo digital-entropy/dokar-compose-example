@@ -24,6 +24,7 @@ DOCKER_PGID="${DOCKER_PGID:-1000}"
 ENABLE_WEB="${ENABLE_WEB:-true}"
 ENABLE_HORIZON="${ENABLE_HORIZON:-true}"
 ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
+ENABLE_PATCH="${ENABLE_PATCH:-false}"
 
 MYSQL_CLI_IMAGE="bitnami/mysql-client:latest"
 POSTGRES_CLI_IMAGE="bitnami/postgresql-client:latest"
@@ -235,7 +236,10 @@ update:downtime() {
 
     # Run migrations
     compose run --rm --user=${DOCKER_USER} artisan php artisan migrate --force
-    compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+    
+    if [ "$ENABLE_PATCH" = "true" ]; then
+        compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+    fi
 
     # Restart workers
     local workers=()
@@ -273,7 +277,10 @@ update:zero_downtime() {
     # 3. Run Migrations (on the NEW code)
     printf "${BOLDYELLOW}→${NC} Running migrations...\n"
     compose run --rm --user=${DOCKER_USER} artisan php artisan migrate --force
-    compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+    
+    if [ "$ENABLE_PATCH" = "true" ]; then
+        compose run --rm --user=${DOCKER_USER} artisan php artisan patcher:run --force
+    fi
 
     # 4. Switch Traffic
     if [ "$ENABLE_WEB" = "true" ]; then
